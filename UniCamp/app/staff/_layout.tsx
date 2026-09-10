@@ -3,7 +3,6 @@ import Feather from "react-native-vector-icons/Feather";
 
 export default function StaffLayout() {
   return (
-
     <Tabs
       screenOptions={{
         headerShown: false,
@@ -43,6 +42,18 @@ export default function StaffLayout() {
           href: null, // 👈 Hides the tab item entirely
         }} 
       />
+      <Tabs.Screen
+        name="results"
+               options={{ 
+          href: null, // 👈 Hides the tab item entirely
+        }} 
+      />
+      <Tabs.Screen
+        name="attendence"
+               options={{ 
+          href: null, // 👈 Hides the tab item entirely
+        }} 
+      />
 
       <Tabs.Screen
         name="profile"
@@ -63,7 +74,7 @@ export default function StaffLayout() {
           title: "channels",
           tabBarIcon: ({ color, size }) => (
             <Feather
-              name="user"
+              name="message-square"
               color={color}
               size={size}
             />

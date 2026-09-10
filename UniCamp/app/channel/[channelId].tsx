@@ -2,7 +2,7 @@ import * as DocumentPicker from "expo-document-picker";
 import { useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import React, { useEffect, useState } from "react";
-import { FlatList, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { FlatList, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { supabase } from "../../lib/supabase";
 
@@ -15,9 +15,11 @@ export default function ChatScreen() {
     const [userId, setUserId] = useState<string | null>(null);
     const [message, setMessage] = useState("");
     const [attachment, setAttachment] = useState<any>(null);
+    const [attachmentUrls, setAttachmentUrls] = useState<{
+        [key: string]: string;
+    }>({});
+    const [sending, setSending] = useState(false);
 
-    const [sending, setSending] =
-        useState(false);
 
     useEffect(() => {
         const getUser = async () => {
@@ -84,9 +86,45 @@ export default function ChatScreen() {
                 .select("*")
                 .eq("channel_id", channelId)
                 .order("created_at", { ascending: true });
-            if (data) {
-                setMessages(data);
+
+            if (error) {
+                console.error("Error fetching messages:", error);
+                return;
             }
+
+            setMessages(data || []);
+
+            const urls: { [key: string]: string } = {};
+            for (const item of data || []) {
+                // Only create URLs for images
+                if (
+                    item.attachment_path &&
+                    item.attachment_type?.startsWith("image/")
+                ) {
+                    const { data: signedData, error: signedError } =
+                        await supabase.storage
+                            .from("chat-attachments")
+                            .createSignedUrl(
+                                item.attachment_path,
+                                60 * 60
+                            );
+
+                    if (signedError) {
+                        console.error(
+                            "Error creating image URL:",
+                            item.attachment_path,
+                            signedError
+                        );
+                        continue;
+                    }
+
+                    if (signedData?.signedUrl) {
+                        urls[item.id] = signedData.signedUrl;
+                    }
+                }
+            }
+            setAttachmentUrls(urls);
+
         } catch (error) {
             console.error("Error fetching messages:", error);
         }
@@ -113,24 +151,25 @@ export default function ChatScreen() {
         setSending(true);
 
         try {
-            let attachmentpath = null;
+            let attachmentpath: string | null = null;
             if (attachment) {
                 const fileExt = attachment.name?.split(".").pop() || "file";
                 const filePath =
                     `${channelId}/${userId}/${Date.now()}.${fileExt}`;
+                console.log(filePath)
                 const response = await fetch(attachment.uri);
                 const arrayBuffer = await response.arrayBuffer();
 
-                const { error: errorfile } = await supabase.storage
-                    .from("chat-attachments")
-                    .upload(filePath, arrayBuffer, {
-                        contentType: attachment.mimeType || "application/octet-stream",
-                        upsert: false,
-                    });
-                if (errorfile) {
-                    console.error("Attachment upload error:", errorfile);
-                    return;
-                }
+                // const { error: errorfile } = await supabase.storage
+                //     .from("chat-attachments")
+                //     .upload(filePath, arrayBuffer, {
+                //         contentType: attachment.mimeType || "application/octet-stream",
+                //         upsert: false,
+                //     });
+                // if (errorfile) {
+                //     console.error("Attachment upload error:", errorfile);
+                //     return;
+                // }
                 attachmentpath = filePath;
             }
 
@@ -139,11 +178,7 @@ export default function ChatScreen() {
                 .insert({
                     channel_id: channelId,
                     sender_id: userId,
-
-                    // Text
                     message: text || null,
-
-                    // Attachment
                     attachment_path: attachmentpath,
                     attachment_name: attachment?.name || null,
                     attachment_type: attachment?.mimeType || null,
@@ -153,13 +188,16 @@ export default function ChatScreen() {
                 .single();
 
             if (error) {
-                console.error(error)
+                console.error("Message insert error:", error);
+
+                // Remove uploaded file if message failed
                 if (attachmentpath) {
                     await supabase.storage
                         .from("chat-attachments")
-                        .remove([attachmentpath])
+                        .remove([attachmentpath]);
                 }
-                return
+
+                return;
             }
             setMessages((previous) => [
                 ...previous,
@@ -167,6 +205,31 @@ export default function ChatScreen() {
             ]);
             setMessage("");
             setAttachment(null);
+
+            if (
+                data.attachment_path &&
+                data.attachment_type?.startsWith("image/")
+            ) {
+                const { data: signedData, error: signedError } =
+                    await supabase.storage
+                        .from("chat-attachments")
+                        .createSignedUrl(
+                            data.attachment_path,
+                            60 * 60
+                        );
+
+                if (signedError) {
+                    console.error(
+                        "Error creating new image URL:",
+                        signedError
+                    );
+                } else if (signedData?.signedUrl) {
+                    setAttachmentUrls((previous) => ({
+                        ...previous,
+                        [data.id]: signedData.signedUrl,
+                    }));
+                }
+            }
         } finally { setSending(false); }
     };
 
@@ -186,29 +249,37 @@ export default function ChatScreen() {
     }
 
     const openAttachment = async (item: any) => {
-    if (!item.attachment_path) return;
+        if (!item.attachment_path) return;
 
-    try {
-        const { data, error } = await supabase.storage
-            .from("chat-attachments")
-            .createSignedUrl(item.attachment_path, 60 * 5);
+        try {
 
-        if (error) {
-            console.error("Error creating attachment URL:", error);
-            return;
+            const { data, error } = await supabase.storage
+                .from("chat-attachments")
+                .createSignedUrl(item.attachment_path, 60 * 5);
+
+
+            if (error) {
+                console.error("Error creating attachment URL:", error);
+                return;
+            }
+
+            if (!data?.signedUrl) {
+                console.error("No signed URL returned");
+                return;
+            }
+
+            await WebBrowser.openBrowserAsync(data.signedUrl);
+
+        } catch (error) {
+            console.error("Error opening attachment:", error);
         }
-
-        if (!data?.signedUrl) {
-            console.error("No signed URL returned");
-            return;
-        }
-
-        await WebBrowser.openBrowserAsync(data.signedUrl);
-
-    } catch (error) {
-        console.error("Error opening attachment:", error);
-    }
-};
+        console.log(
+            "MESSAGE:",
+            item.id,
+            "PATH:",
+            item.attachment_path
+        );
+    };
 
     return (
         <SafeAreaView style={{ flex: 1 }}>
@@ -229,15 +300,14 @@ export default function ChatScreen() {
                 style={{ flex: 1 }}
                 behavior={Platform.OS === "ios" ? "padding" : "height"}
             >
-
-                {/* Messages */}
                 <FlatList
                     data={messages}
                     keyExtractor={(item) => item.id}
                     contentContainerStyle={styles.messageList}
                     renderItem={({ item }) => {
                         const isMyMessage = item.sender_id === userId;
-
+                        const isImage =
+                            item.attachment_type?.startsWith("image/");
                         return (
                             <View
                                 style={[
@@ -251,37 +321,45 @@ export default function ChatScreen() {
                                         isMyMessage && styles.myMessageBubble,
                                     ]}
                                 >
-                                    <Text
-                                        style={[
-                                            styles.messageText,
-                                            isMyMessage && styles.myMessageText,
-                                        ]}
-                                    >
-                                        {item.attachment_path && (
-                                            <Pressable
-                                                style={styles.attachmentCard}
-                                                onPress={() => openAttachment(item)}
-                                            >
-                                                <Text style={styles.attachmentIcon}>
-                                                    📎
-                                                </Text>
+                                    {item.message && (
+                                        <Text
+                                            style={[
+                                                styles.messageText,
+                                                isMyMessage && styles.myMessageText,
+                                            ]}
+                                        >
+                                            {item.message}
+                                        </Text>
+                                    )}
 
-                                                <View style={{ flex: 1 }}>
+                                    {item.attachment_path && (
+                                        <>
+                                            {isImage && attachmentUrls[item.id] ? (
+                                                <Pressable
+                                                    onPress={() => openAttachment(item)}
+                                                >
+                                                    <Image
+                                                        source={{
+                                                            uri: attachmentUrls[item.id],
+                                                        }}
+                                                        style={{ width: 200, height: 200 }}
+                                                    />
+                                                </Pressable>
+                                            ) : (
+                                                <Pressable
+                                                    // style={styles.attachmentCard}
+                                                    onPress={() => openAttachment(item)}
+                                                >
                                                     <Text
                                                         style={styles.attachmentName}
                                                         numberOfLines={1}
                                                     >
                                                         {item.attachment_name}
                                                     </Text>
-
-                                                    <Text style={styles.attachmentType}>
-                                                        {item.attachment_type || "File"}
-                                                    </Text>
-                                                </View>
-                                            </Pressable>
-                                        )}
-                                        {item.message}
-                                    </Text>
+                                                </Pressable>
+                                            )}
+                                        </>
+                                    )}
 
                                     <Text
                                         style={[
@@ -297,7 +375,6 @@ export default function ChatScreen() {
                     }}
                 />
 
-                {/* Selected attachment */}
                 {attachment && (
                     <View style={styles.selectedAttachment}>
 
@@ -318,8 +395,6 @@ export default function ChatScreen() {
 
                     </View>
                 )}
-
-                {/* Input area */}
                 <View
                     style={{
                         flexDirection: "row",
@@ -345,7 +420,6 @@ export default function ChatScreen() {
                         onChangeText={setMessage}
                         multiline
                     />
-
 
                     <Pressable
                         style={styles.attachmentButton}

@@ -18,12 +18,10 @@ export default function Channels() {
     useEffect(() => {
         const loadStaff = async () => {
             const data = await getCurrentStaff();
-
             if (!data) {
                 console.log("Staff not found");
                 return;
             }
-
             setStaff(data);
         };
 
@@ -88,7 +86,6 @@ export default function Channels() {
     };
     useEffect(() => {
         if (!staff?.dept) return;
-
         loadinchannel();
     }, [staff]);
     const createChannel = async () => {
@@ -284,13 +281,13 @@ export default function Channels() {
                     <Text style={{ color: "#fff", fontWeight: 500, fontSize: 15 }}>Create +</Text>
                 </Pressable>
             </View>
-            <View style={{ flex: 1, padding: 15 }}>
-                <Text style={{ fontSize: 15, fontWeight: "bold" }}>
+            <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 15, fontWeight: "bold", padding: 10 }}>
                     My Channels
                 </Text>
 
                 {channeljoin.map((channel) => (
-                    <Pressable onPress={() => redirectchannel(channel.id)} style={{ backgroundColor: "#ccc", padding: 10, borderRadius: 10, marginVertical: 10 }} key={channel.id}>
+                    <Pressable onPress={() => redirectchannel(channel.id)} style={{ backgroundColor: "#e2e2e2", padding: 16.5 }} key={channel.id}>
                         <Text style={{ fontSize: 15, fontWeight: "bold" }}>{channel.name}</Text>
                         <Text style={{ fontSize: 12, color: "#5f5f5f" }}>{channel.description}</Text>
                     </Pressable>
@@ -301,62 +298,67 @@ export default function Channels() {
                     fontSize: 15,
                     fontWeight: "bold",
                     marginTop: 20,
+                    padding: 10
                 }}
             >
                 Available Channels
             </Text>
-
-            {notJoinedChannels.map((channel) => (
-                <View
-                    key={channel.id}
-
-                    style={{
-                        backgroundColor: "#eee",
-                        padding: 10,
-                        borderRadius: 10,
-                        marginVertical: 10,
-                    }}
-                >
-                    <Text
-                        style={{
-                            fontSize: 15,
-                            fontWeight: "bold",
-                        }}
-                    >
-                        {channel.name}
-                    </Text>
-
-                    <Text
-                        style={{
-                            fontSize: 12,
-                            color: "#5f5f5f",
-                            marginTop: 3,
-                        }}
-                    >
-                        {channel.description}
-                    </Text>
-
-                    <Pressable
-                        onPress={() => Channeljoin(channel.id)}
-                        style={{
-                            backgroundColor: "#000",
-                            padding: 8,
-                            borderRadius: 8,
-                            marginTop: 10,
-                            alignSelf: "flex-start",
-                        }}
-                    >
-                        <Text
+            <View style={{flexDirection: "row"}}>
+                {notJoinedChannels.map((channel) => (
+                        <View
+                            key={channel.id}
                             style={{
-                                color: "#fff",
-                                fontWeight: "bold",
+                                // justifyContent : "center",
+                                backgroundColor: "#eee",
+                                padding: 10,
+                                // borderRadius: 10,
+                                // marginVertical: 10,
+                                width: "50%",
                             }}
                         >
-                            Join
-                        </Text>
-                    </Pressable>
-                </View>
-            ))}
+                            <Text
+                                style={{
+                                    fontSize: 15,
+                                    fontWeight: "bold",
+                                }}
+                            >
+                                {channel.name}
+                            </Text>
+
+                            <Text
+                                style={{
+                                    fontSize: 12,
+                                    color: "#5f5f5f",
+                                    marginTop: 3,
+                                }}
+                            >
+                                {channel.description}
+                            </Text>
+
+                            <Pressable
+                                onPress={() => Channeljoin(channel.id)}
+                                style={{
+                                    backgroundColor: "#000",
+                                    padding: 8,
+                                    borderRadius: 8,
+                                    marginTop: 10,
+                                    alignSelf: "flex-start",
+                                }}
+                            >
+                                <Text
+                                    style={{
+                                        right: 1,
+                                        // position: 'absolute',
+                                        color: "#fff",
+                                        fontWeight: "bold",
+                                    }}
+                                >
+                                    Join
+                                </Text>
+                            </Pressable>
+                        </View>
+                ))}
+            </View>
 
             <Modal
                 animationType="slide"

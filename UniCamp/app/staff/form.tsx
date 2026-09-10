@@ -83,7 +83,6 @@ export default function Form() {
                 `Student ${fullName} has been created successfully.`
             );
 
-            // Clear form
             setFullName("");
             setEmail("");
             setDepartment("");
@@ -132,8 +131,6 @@ export default function Form() {
                     Student Form
                 </Text>
 
-                {/* Student Name */}
-
                 <TextInput
                     value={fullName}
                     onChangeText={setFullName}
@@ -147,9 +144,6 @@ export default function Form() {
                         marginBottom: 15,
                     }}
                 />
-
-                {/* Student Email */}
-
                 <TextInput
                     value={email}
                     onChangeText={setEmail}
@@ -166,7 +160,6 @@ export default function Form() {
                     }}
                 />
 
-                {/* Department */}
 
                 <View
                     style={{
@@ -214,7 +207,6 @@ export default function Form() {
                     </Picker>
                 </View>
 
-                {/* Course */}
 
                 <View
                     style={{
@@ -272,8 +264,6 @@ export default function Form() {
                     </Picker>
                 </View>
 
-                {/* Division */}
-
                 <View
                     style={{
                         width: "100%",
@@ -314,8 +304,6 @@ export default function Form() {
                         />
                     </Picker>
                 </View>
-
-                {/* Semester */}
 
                 <View
                     style={{
@@ -377,10 +365,7 @@ export default function Form() {
                         />
                     </Picker>
                 </View>
-
             </ScrollView>
-
-            {/* Submit Button */}
 
             <Pressable
                 onPress={handleSubmit}
