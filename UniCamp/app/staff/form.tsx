@@ -1,411 +1,48 @@
-import { supabase } from "@/lib/supabase";
-import { Picker } from "@react-native-picker/picker";
-import React, { useState } from "react";
-import {
-    ActivityIndicator,
-    Alert,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
-} from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import Feather from "react-native-vector-icons/Feather";
+import React, { useState } from 'react';
+import { Alert } from 'react-native';
+import { router } from 'expo-router';
+import Screen from '../../components/Screen';
+import Header from '../../components/Header';
+import Scroll from '../../components/Scroll';
+import Field from '../../components/Field';
+import Button from '../../components/Button';
+import EnumPicker from '../../components/EnumPicker';
+import { COURSES, DEPARTMENTS, DIVISIONS, SEMESTERS } from '../../lib/enums';
+import { supabase } from '../../lib/supabase';
 
-
+// Add student. The account is created by the `provision-account` edge function (needs a secret key, so it can't run in the app).
 export default function Form() {
-    const [department, setDepartment] = useState("");
-    const [course, setCourse] = useState("");
-    const [division, setDivision] = useState("");
-    const [semester, setSemester] = useState("");
-    const [fullName, setFullName] = useState("");
-    const [email, setEmail] = useState("");
+  const [f, setF] = useState({ name: '', email: '', password: '', phone: '', department: DEPARTMENTS[0] as string, course: COURSES[0] as string, division: DIVISIONS[0] as string, semester: SEMESTERS[0] as string });
+  const [saving, setSaving] = useState(false);
+  const set = (key: keyof typeof f) => (v: string) => setF({ ...f, [key]: v });
 
-    const [loading, setLoading] = useState(false);
+  const save = async () => {
+    if (!f.name.trim() || !f.email.trim() || !f.password) return Alert.alert('Missing details', 'Name, email and password are required.');
+    if (f.password.length < 8) return Alert.alert('Password too short', 'Use at least 8 characters.');
+    setSaving(true);
+    const { data, error } = await supabase.functions.invoke('provision-account', {
+      body: { action: 'create_student', full_name: f.name.trim(), email: f.email.trim().toLowerCase(), password: f.password, phone: f.phone.trim(), department: f.department, course: f.course, division: f.division, semester: Number(f.semester) },
+    });
+    setSaving(false);
+    if (error || data?.error) return Alert.alert('Not created', data?.error || 'Please try again.');
+    Alert.alert('Created', 'Student account created.');
+    router.replace('/staff/students');
+  };
 
-    const handleSubmit = async () => {
-        // Check fields
-        if (
-            !fullName.trim() ||
-            !email.trim() ||
-            !department ||
-            !course ||
-            !division ||
-            !semester
-        ) {
-            Alert.alert(
-                "Missing Information",
-                "Please fill in all student details."
-            );
-            return;
-        }
-
-        try {
-            setLoading(true);
-
-            const { data, error } =
-                await supabase.functions.invoke(
-                    "provision-account",
-                    {
-                        body: {
-                            full_name: fullName.trim(),
-                            email: email.trim(),
-                            department: department,
-                            course: course,
-                            division: division,
-                            semester: Number(semester),
-                        },
-                    }
-                );
-
-            if (error) {
-                console.log(
-                    "Create student error:",
-                    error
-                );
-
-                Alert.alert(
-                    "Error",
-                    error.message
-                );
-
-                return;
-            }
-
-            console.log(
-                "Created student:",
-                data
-            );
-
-            Alert.alert(
-                "Student Created",
-                `Student ${fullName} has been created successfully.`
-            );
-
-            setFullName("");
-            setEmail("");
-            setDepartment("");
-            setCourse("");
-            setDivision("");
-            setSemester("");
-
-        } catch (error) {
-            console.log(
-                "Unexpected error:",
-                error
-            );
-
-            Alert.alert(
-                "Error",
-                "Something went wrong."
-            );
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    return (
-        <SafeAreaView
-            style={{
-                flex: 1,
-            }}
-        >
-            <ScrollView
-                contentContainerStyle={{
-                    padding: 15,
-                    alignItems: "center",
-                    paddingBottom: 120,
-                }}
-            >
-
-                <Text
-                    style={{
-                        margin: 10,
-                        fontSize: 20,
-                        fontWeight: "500",
-                        marginBottom: 40,
-                        textAlign: "center",
-                    }}
-                >
-                    Student Form
-                </Text>
-
-                <TextInput
-                    value={fullName}
-                    onChangeText={setFullName}
-                    placeholder="Student Name"
-                    style={{
-                        padding: 15,
-                        width: "100%",
-                        height: 50,
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                />
-                <TextInput
-                    value={email}
-                    onChangeText={setEmail}
-                    placeholder="Student Email"
-                    keyboardType="email-address"
-                    autoCapitalize="none"
-                    style={{
-                        padding: 15,
-                        width: "100%",
-                        height: 50,
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                />
-
-
-                <View
-                    style={{
-                        width: "100%",
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                >
-                    <Picker
-                        selectedValue={department}
-                        onValueChange={(value) =>
-                            setDepartment(value)
-                        }
-                    >
-                        <Picker.Item
-                            label="Select Department"
-                            value=""
-                        />
-
-                        <Picker.Item
-                            label="Dept of CS & IT"
-                            value="Dept of CS & IT"
-                        />
-
-                        <Picker.Item
-                            label="Dept of management"
-                            value="Dept of management"
-                        />
-
-                        <Picker.Item
-                            label="Dept of Law"
-                            value="Dept of Law"
-                        />
-
-                        <Picker.Item
-                            label="Dept of Science"
-                            value="Dept of Science"
-                        />
-
-                        <Picker.Item
-                            label="Dept of nurcing"
-                            value="Dept of nurcing"
-                        />
-                    </Picker>
-                </View>
-
-
-                <View
-                    style={{
-                        width: "100%",
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                >
-                    <Picker
-                        selectedValue={course}
-                        onValueChange={(value) =>
-                            setCourse(value)
-                        }
-                    >
-                        <Picker.Item
-                            label="Select Course"
-                            value=""
-                        />
-
-                        <Picker.Item
-                            label="Bsc IT"
-                            value="Bsc IT"
-                        />
-
-                        <Picker.Item
-                            label="BCA"
-                            value="BCA"
-                        />
-
-                        <Picker.Item
-                            label="Nurcing"
-                            value="Nurcing"
-                        />
-
-                        <Picker.Item
-                            label="LAW"
-                            value="LAW"
-                        />
-
-                        <Picker.Item
-                            label="B.Tech"
-                            value="B.Tech"
-                        />
-
-                        <Picker.Item
-                            label="MCA"
-                            value="MCA"
-                        />
-
-                        <Picker.Item
-                            label="M.Tech"
-                            value="M.Tech"
-                        />
-                    </Picker>
-                </View>
-
-                <View
-                    style={{
-                        width: "100%",
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                >
-                    <Picker
-                        selectedValue={division}
-                        onValueChange={(value) =>
-                            setDivision(value)
-                        }
-                    >
-                        <Picker.Item
-                            label="Select Division"
-                            value=""
-                        />
-
-                        <Picker.Item
-                            label="A"
-                            value="A"
-                        />
-
-                        <Picker.Item
-                            label="B"
-                            value="B"
-                        />
-
-                        <Picker.Item
-                            label="C"
-                            value="C"
-                        />
-
-                        <Picker.Item
-                            label="D"
-                            value="D"
-                        />
-                    </Picker>
-                </View>
-
-                <View
-                    style={{
-                        width: "100%",
-                        backgroundColor: "#c5c4c4",
-                        borderRadius: 10,
-                        marginBottom: 15,
-                    }}
-                >
-                    <Picker
-                        selectedValue={semester}
-                        onValueChange={(value) =>
-                            setSemester(value)
-                        }
-                    >
-                        <Picker.Item
-                            label="Select Semester"
-                            value=""
-                        />
-
-                        <Picker.Item
-                            label="Semester 1"
-                            value="1"
-                        />
-
-                        <Picker.Item
-                            label="Semester 2"
-                            value="2"
-                        />
-
-                        <Picker.Item
-                            label="Semester 3"
-                            value="3"
-                        />
-
-                        <Picker.Item
-                            label="Semester 4"
-                            value="4"
-                        />
-
-                        <Picker.Item
-                            label="Semester 5"
-                            value="5"
-                        />
-
-                        <Picker.Item
-                            label="Semester 6"
-                            value="6"
-                        />
-
-                        <Picker.Item
-                            label="Semester 7"
-                            value="7"
-                        />
-
-                        <Picker.Item
-                            label="Semester 8"
-                            value="8"
-                        />
-                    </Picker>
-                </View>
-            </ScrollView>
-
-            <Pressable
-                onPress={handleSubmit}
-                disabled={loading}
-                style={{
-                    backgroundColor: "#000",
-                    padding: 20,
-                    alignItems: "center",
-                    margin: 10,
-                    borderRadius: 50,
-                    position: "absolute",
-                    bottom: 20,
-                    width: "80%",
-                    alignSelf: "center",
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    paddingHorizontal: 50,
-                    opacity: loading ? 0.6 : 1,
-                }}
-            >
-                {loading ? (
-                    <ActivityIndicator color="#fff" />
-                ) : (
-                    <>
-                        <Text
-                            style={{
-                                color: "#fff",
-                            }}
-                        >
-                            Submit Student
-                        </Text>
-
-                        <Feather
-                            name="arrow-right"
-                            color="#fff"
-                            size={30}
-                        />
-                    </>
-                )}
-            </Pressable>
-        </SafeAreaView>
-    );
+  return (
+    <Screen stack>
+      <Header back large title="Add student" />
+      <Scroll contentContainerStyle={{ padding: 20, paddingTop: 0 }}>
+        <Field label="Full name" value={f.name} onChangeText={set('name')} />
+        <Field label="Email" value={f.email} onChangeText={set('email')} autoCapitalize="none" keyboardType="email-address" />
+        <Field label="Temporary password" value={f.password} onChangeText={set('password')} secureTextEntry autoCapitalize="none" />
+        <Field label="Phone" value={f.phone} onChangeText={set('phone')} keyboardType="phone-pad" />
+        <EnumPicker label="Department" value={f.department} options={DEPARTMENTS} onChange={set('department')} />
+        <EnumPicker label="Course" value={f.course} options={COURSES} onChange={set('course')} />
+        <EnumPicker label="Division" value={f.division} options={DIVISIONS} onChange={set('division')} />
+        <EnumPicker label="Semester" value={f.semester} options={SEMESTERS} onChange={set('semester')} />
+        <Button title="Create student" onPress={save} loading={saving} style={{ marginTop: 24 }} />
+      </Scroll>
+    </Screen>
+  );
 }

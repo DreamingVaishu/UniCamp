@@ -1,694 +1,221 @@
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import nodemailer from 'npm:nodemailer@9';
 
-console.log("🚀 provision-account starting");
+const url = Deno.env.get('SUPABASE_URL')!;
+const serviceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || Deno.env.get('SUPABASE_SECRET_KEY');
+if (!serviceKey) throw new Error('Missing service role key');
+const admin = createClient(url, serviceKey);
 
-// --------------------------------------------------
-// Supabase environment variables
-// --------------------------------------------------
+Deno.serve(async (req) => {
+  try {
+    if (req.method !== 'POST') return json({ error: 'POST only' }, 405);
+    const token = (req.headers.get('Authorization') || '').replace('Bearer ', '');
+    if (!token) return json({ error: 'Login required' }, 401);
+    const { data: auth, error: authError } = await admin.auth.getUser(token);
+    if (authError || !auth.user) return json({ error: 'Invalid session' }, 401);
 
-const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const { data: adminRow } = await admin.from('admin').select('*').eq('id', auth.user.id).maybeSingle();
+    const { data: staffRow } = await admin.from('staff').select('*').eq('id', auth.user.id).maybeSingle();
+    if (!adminRow && !staffRow) return json({ error: 'Only admin or staff can use this function' }, 403);
 
-const secretKeysRaw = Deno.env.get(
-    "SUPABASE_SECRET_KEYS"
-);
+    const body = await req.json();
+    const action = body.action;
 
-console.log(
-    "SUPABASE_URL exists:",
-    !!supabaseUrl
-);
-
-console.log(
-    "SUPABASE_SECRET_KEYS exists:",
-    !!secretKeysRaw
-);
-
-if (!supabaseUrl) {
-    throw new Error(
-        "SUPABASE_URL is missing"
-    );
-}
-
-if (!secretKeysRaw) {
-    throw new Error(
-        "SUPABASE_SECRET_KEYS is missing"
-    );
-}
-
-// SUPABASE_SECRET_KEYS is a JSON object
-const secretKeys = JSON.parse(
-    secretKeysRaw
-);
-
-const secretKey = secretKeys["default"];
-
-if (!secretKey) {
-    throw new Error(
-        "Default Supabase secret key is missing"
-    );
-}
-
-// --------------------------------------------------
-// Admin client
-// --------------------------------------------------
-
-const supabaseAdmin = createClient(
-    supabaseUrl,
-    secretKey,
-    {
-        auth: {
-            autoRefreshToken: false,
-            persistSession: false,
-        },
+    if (action === 'create_student') {
+      if (!staffRow && !adminRow) return json({ error: 'Staff or admin only' }, 403);
+      if (staffRow && body.department !== staffRow.department) return json({ error: 'You can only create students in your department' }, 403);
+      const { email, password, full_name, department, course, division, semester, phone } = body;
+      if (!email || !password || !full_name || !department || !course || !division || !semester) return json({ error: 'Missing student fields' }, 400);
+      const { data: created, error } = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+      if (error || !created.user) return json({ error: error?.message || 'Could not create account' }, 400);
+      const { data: student, error: dbError } = await admin.from('students').insert({ id: created.user.id, email, full_name, department, course, division, semester: Number(semester), phone, created_by: auth.user.id }).select().single();
+      if (dbError) { await admin.auth.admin.deleteUser(created.user.id); return json({ error: dbError.message }, 400); }
+      return json({ student });
     }
-);
 
-console.log(
-    "✅ Supabase admin client created"
-);
+    if (action === 'delete_student') {
+      const { student_id } = body;
+      const { data: student } = await admin.from('students').select('*').eq('id', student_id).single();
+      if (!student) return json({ error: 'Student not found' }, 404);
+      if (staffRow && student.department !== staffRow.department) return json({ error: 'Not your department' }, 403);
+      const { error } = await admin.auth.admin.deleteUser(student_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ success: true });
+    }
 
-// --------------------------------------------------
-// Edge Function
-// --------------------------------------------------
+    if (action === 'delete_staff') {
+      if (!adminRow) return json({ error: 'Admin only' }, 403);
+      const { staff_id } = body;
+      const { error } = await admin.auth.admin.deleteUser(staff_id);
+      if (error) return json({ error: error.message }, 400);
+      return json({ success: true });
+    }
 
-Deno.serve(async (req: Request) => {
+    if (action === 'create_staff') {
+      if (!adminRow) return json({ error: 'Admin only' }, 403);
 
-    console.log("📥 Request received");
-    console.log("Method:", req.method);
+      const { email, password, username, department, phone } = body;
 
-    try {
+      if (!email || !password || !username || !department) {
+        return json({ error: 'Missing staff fields' }, 400);
+      }
 
-        // --------------------------------------------------
-        // Only allow POST
-        // --------------------------------------------------
+      // 1. Create the Supabase Auth account
+      const { data: created, error } =
+        await admin.auth.admin.createUser({
+          email: email.trim(),
+          password,
+          email_confirm: true,
+        });
 
-        if (req.method !== "POST") {
-            return new Response(
-                JSON.stringify({
-                    error: "Only POST requests are allowed",
-                }),
-                {
-                    status: 405,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        // --------------------------------------------------
-        // Get Authorization header
-        // --------------------------------------------------
-
-        const authHeader =
-            req.headers.get(
-                "Authorization"
-            );
-
-        if (!authHeader) {
-
-            console.log(
-                "❌ No Authorization header"
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Missing Authorization header",
-                }),
-                {
-                    status: 401,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        // --------------------------------------------------
-        // Extract JWT
-        // --------------------------------------------------
-
-        const token =
-            authHeader.replace(
-                "Bearer ",
-                ""
-            );
-
-        if (!token) {
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Invalid Authorization header",
-                }),
-                {
-                    status: 401,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        console.log(
-            "🔐 Authorization token received"
+      if (error || !created.user) {
+        return json(
+          { error: error?.message || 'Could not create account' },
+          400
         );
+      }
 
-        // --------------------------------------------------
-        // Verify logged-in user
-        // --------------------------------------------------
-
-        const {
-            data: userData,
-            error: userError,
-        } =
-            await supabaseAdmin.auth.getUser(
-                token
-            );
-
-        if (userError) {
-
-            console.log(
-                "❌ JWT verification failed:",
-                userError.message
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Invalid or expired login session",
-                    details:
-                        userError.message,
-                }),
-                {
-                    status: 401,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        const user =
-            userData.user;
-
-        if (!user) {
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Logged-in user not found",
-                }),
-                {
-                    status: 401,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        console.log(
-            "👤 Logged-in user:",
-            user.id
-        );
-
-        // --------------------------------------------------
-        // Check staff
-        // --------------------------------------------------
-
-        const {
-            data: staff,
-            error: staffError,
-        } =
-            await supabaseAdmin
-                .from("staff")
-                .select(
-                    "id, username, dept, role"
-                )
-                .eq(
-                    "id",
-                    user.id
-                )
-                .maybeSingle();
-
-        if (staffError) {
-
-            console.log(
-                "❌ Staff lookup error:",
-                staffError.message
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Could not verify staff account",
-                    details:
-                        staffError.message,
-                }),
-                {
-                    status: 500,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!staff) {
-
-            console.log(
-                "❌ User is not in staff table"
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Only staff can create students",
-                }),
-                {
-                    status: 403,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (staff.role !== "staff") {
-
-            console.log(
-                "❌ User does not have staff role:",
-                staff.role
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "You do not have permission to create students",
-                }),
-                {
-                    status: 403,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        console.log(
-            "✅ Staff verified:",
-            staff.username
-        );
-
-        // --------------------------------------------------
-        // Read student data
-        // --------------------------------------------------
-
-        const body =
-            await req.json();
-
-        const {
-            full_name,
-            email,
+      // 2. Create the staff database row
+      const { data: staff, error: dbError } =
+        await admin
+          .from('staff')
+          .insert({
+            id: created.user.id,
+            email: email.trim(),
+            username: username.trim(),
             department,
-            course,
-            division,
-            semester,
-        } = body;
+            phone: phone || null,
+          })
+          .select()
+          .single();
 
-        console.log(
-            "📋 Student data received:",
-            {
-                full_name,
-                email,
-                department,
-                course,
-                division,
-                semester,
-            }
+      if (dbError) {
+        await admin.auth.admin.deleteUser(created.user.id);
+        return json({ error: dbError.message }, 400);
+      }
+
+      // 3. Send the login details to the staff member
+      try {
+        await sendStaffLoginEmail({
+          email: email.trim(),
+          username: username.trim(),
+          password,
+          department,
+        });
+      } catch (emailError) {
+        console.error('Staff email error:', emailError);
+
+        // Do not leave an account that the staff member cannot receive
+        // the login details for. Remove both records.
+        await admin.from('staff').delete().eq('id', created.user.id);
+        await admin.auth.admin.deleteUser(created.user.id);
+
+        return json(
+          {
+            error:
+              emailError instanceof Error
+                ? `Staff account was not created because the email could not be sent: ${emailError.message}`
+                : 'Staff account was not created because the email could not be sent.',
+          },
+          500
         );
+      }
 
-        // --------------------------------------------------
-        // Validate
-        // --------------------------------------------------
-
-        if (!full_name?.trim()) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Student name is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!email?.trim()) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Student email is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!department) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Department is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!course) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Course is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!division) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Division is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (
-            semester === undefined ||
-            semester === null ||
-            Number.isNaN(Number(semester))
-        ) {
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Semester is required",
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        // --------------------------------------------------
-        // Generate temporary password
-        // --------------------------------------------------
-
-        const temporaryPassword =
-            crypto.randomUUID()
-                .replaceAll("-", "")
-                .slice(0, 10) + "Aa1!";
-
-        console.log(
-            "🔑 Temporary password generated"
-        );
-
-        // --------------------------------------------------
-        // Create Auth user
-        // --------------------------------------------------
-
-        const {
-            data: authData,
-            error: authError,
-        } =
-            await supabaseAdmin.auth.admin
-                .createUser({
-                    email:
-                        email.trim()
-                            .toLowerCase(),
-
-                    password:
-                        temporaryPassword,
-
-                    email_confirm:
-                        true,
-
-                    user_metadata: {
-                        full_name:
-                            full_name.trim(),
-
-                        role: "student",
-                    },
-                });
-
-        if (authError) {
-
-            console.log(
-                "❌ Auth user creation failed:",
-                authError.message
-            );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        authError.message,
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        if (!authData.user) {
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Auth user was not created",
-                }),
-                {
-                    status: 500,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        const studentId =
-            authData.user.id;
-
-        console.log(
-            "✅ Auth user created:",
-            studentId
-        );
-
-        // --------------------------------------------------
-        // Insert student
-        // --------------------------------------------------
-
-        const {
-            data: student,
-            error: studentError,
-        } =
-            await supabaseAdmin
-                .from("students")
-                .insert({
-                    id: studentId,
-
-                    full_name:
-                        full_name.trim(),
-
-                    email:
-                        email.trim()
-                            .toLowerCase(),
-
-                    department,
-
-                    course,
-
-                    division,
-
-                    semester:
-                        Number(semester),
-
-                    role: "student",
-                })
-                .select(
-                    "id, admission_no, roll_no, full_name, email, department, course, division, semester, role"
-                )
-                .single();
-
-        // --------------------------------------------------
-        // If database insert fails,
-        // delete Auth user
-        // --------------------------------------------------
-
-        if (studentError) {
-
-            console.log(
-                "❌ Student insert failed:",
-                studentError.message
-            );
-
-            console.log(
-                "🗑️ Removing Auth user..."
-            );
-
-            await supabaseAdmin.auth.admin
-                .deleteUser(
-                    studentId
-                );
-
-            return new Response(
-                JSON.stringify({
-                    error:
-                        "Could not create student record",
-                    details:
-                        studentError.message,
-                }),
-                {
-                    status: 400,
-                    headers: {
-                        "Content-Type":
-                            "application/json",
-                    },
-                }
-            );
-        }
-
-        console.log(
-            "✅ Student created:",
-            student.admission_no
-        );
-
-        // --------------------------------------------------
-        // Success
-        // --------------------------------------------------
-
-        return new Response(
-            JSON.stringify({
-                success: true,
-
-                message:
-                    "Student created successfully",
-
-                student: {
-                    id:
-                        student.id,
-
-                    admission_no:
-                        student.admission_no,
-
-                    roll_no:
-                        student.roll_no,
-
-                    full_name:
-                        student.full_name,
-
-                    email:
-                        student.email,
-
-                    department:
-                        student.department,
-
-                    course:
-                        student.course,
-
-                    division:
-                        student.division,
-
-                    semester:
-                        student.semester,
-
-                    role:
-                        student.role,
-                },
-
-                temporary_password:
-                    temporaryPassword,
-            }),
-            {
-                status: 200,
-
-                headers: {
-                    "Content-Type":
-                        "application/json",
-                },
-            }
-        );
-
-    } catch (error) {
-
-        console.error(
-            "🔥 Unexpected error:",
-            error
-        );
-
-        return new Response(
-            JSON.stringify({
-                error:
-                    "Internal server error",
-
-                details:
-                    error instanceof Error
-                        ? error.message
-                        : String(error),
-            }),
-            {
-                status: 500,
-
-                headers: {
-                    "Content-Type":
-                        "application/json",
-                },
-            }
-        );
+      return json({
+        staff,
+        email_sent: true,
+      });
     }
+
+    return json({ error: 'Unknown action' }, 400);
+  } catch (e) { return json({ error: e instanceof Error ? e.message : 'Server error' }, 500); }
 });
+
+async function sendStaffLoginEmail({
+  email,
+  username,
+  password,
+  department,
+}: {
+  email: string;
+  username: string;
+  password: string;
+  department: string;
+}) {
+  const smtpUser = Deno.env.get('SMTP_USERNAME');
+  const smtpPassword = Deno.env.get('SMTP_PASSWORD');
+  const smtpFrom = Deno.env.get('SMTP_FROM') || smtpUser;
+  const smtpHost = Deno.env.get('SMTP_HOSTNAME') || 'smtp.gmail.com';
+  const smtpPort = Number(Deno.env.get('SMTP_PORT') || '465');
+  const smtpSecure = (Deno.env.get('SMTP_SECURE') || 'true') === 'true';
+
+  if (!smtpUser || !smtpPassword || !smtpFrom) {
+    throw new Error(
+      'Email is not configured. Add SMTP_USERNAME, SMTP_PASSWORD and SMTP_FROM to Supabase secrets.'
+    );
+  }
+
+  const transporter = nodemailer.createTransport({
+    host: smtpHost,
+    port: smtpPort,
+    secure: smtpSecure,
+    auth: {
+      user: smtpUser,
+      pass: smtpPassword,
+    },
+  });
+
+  const appName = Deno.env.get('APP_NAME') || 'UniCamp';
+  const loginUrl = Deno.env.get('APP_LOGIN_URL') || '';
+
+  const text = [
+    `Welcome to ${appName}!`,
+    '',
+    `Hello ${username},`,
+    '',
+    'Your staff account has been created by the administrator.',
+    '',
+    `Email: ${email}`,
+    `Password: ${password}`,
+    `Department: ${department}`,
+    loginUrl ? `Login: ${loginUrl}` : '',
+    '',
+    'Please keep these login details private.',
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const html = `
+    <div style="font-family:Arial,sans-serif;max-width:600px;margin:auto;padding:24px">
+      <h2>${escapeHtml(appName)} Staff Account</h2>
+      <p>Hello ${escapeHtml(username)},</p>
+      <p>Your staff account has been created by the administrator.</p>
+      <div style="background:#f2f2f2;padding:16px;border-radius:10px">
+        <p><strong>Email:</strong> ${escapeHtml(email)}</p>
+        <p><strong>Password:</strong> ${escapeHtml(password)}</p>
+        <p><strong>Department:</strong> ${escapeHtml(department)}</p>
+      </div>
+      ${loginUrl ? `<p><a href="${escapeHtml(loginUrl)}">Open UniCamp</a></p>` : ''}
+      <p>Please keep these login details private.</p>
+    </div>
+  `;
+
+  await transporter.sendMail({
+    from: smtpFrom,
+    to: email,
+    subject: `${appName} - Your Staff Login Details`,
+    text,
+    html,
+  });
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+function json(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' } }); }

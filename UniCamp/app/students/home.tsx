@@ -1,74 +1,58 @@
-import React, { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { supabase } from "../../lib/supabase";
+import React from 'react';
+import { View } from 'react-native';
+import Screen from '../../components/Screen';
+import Header from '../../components/Header';
+import Scroll from '../../components/Scroll';
+import { Empty } from '../../components/Status';
+import { NoticeBox, ProfileBanner } from '../../components/ProfileBanner';
+import Feather from '@expo/vector-icons/Feather';
+import { supabase } from '../../lib/supabase';
+import { userId } from '../../lib/auth';
+import { ok } from '../../lib/helpers';
+import { useLoad } from '../../lib/useLoad';
+import { Text } from 'react-native';
+import { C, T } from '../../lib/theme';
 
 export default function Home() {
-  const [student, setStudent] = useState<any>(null);
-  const [announcements, setAnnouncements] = useState<any[]>([]);
+  const q = useLoad(async () => {
+    const id = await userId();
+    const student = ok(await supabase.from('students').select('*').eq('id', id).single());
+    const notices = ok(await supabase.from('announcements').select('*').eq('department', student.department).order('created_at', { ascending: false }).limit(5));
+    return { student, notices };
+  }, { student: null as any, notices: [] as any[] });
 
-  useEffect(() => {
-    const loadStudent = async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) return;
-
-      const { data } = await supabase
-        .from("students")
-        .select("*")
-        .eq("id", user.id)
-        .maybeSingle();
-
-      setStudent(data);
-    };
-
-    loadStudent();
-  }, []);
-
-  useEffect(() => {
-    const loadAnnouncements = async () => {
-      if (!student?.department) return;
-
-      const { data, error } = await supabase
-        .from("announcements")
-        .select("*")
-        .eq("department", student.department)
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        console.log("Announcements error:", error);
-        return;
-      }
-
-      setAnnouncements(data || []);
-    };
-
-    loadAnnouncements();
-  }, [student]);
+  const { student, notices } = q.data;
 
   return (
-    <SafeAreaView style={{ flex: 1 }}>
-      <ScrollView contentContainerStyle={{ padding: 20 }}>
-        <Text style={{ fontSize: 15 }}>Welcome!</Text>
-        <Text style={{ fontSize: 25, fontWeight: "500", marginBottom: 20 }}>
-          {student?.full_name}
-        </Text>
-
-        <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 10 }}>Announcements</Text>
-
-        {announcements.length === 0 && (
-          <Text style={{ color: "#888" }}>No announcements yet</Text>
-        )}
-
-        {announcements.map((item) => (
-          <View key={item.id} style={{ backgroundColor: "#f2f2f2", padding: 15, borderRadius: 10, marginBottom: 10 }}>
-            <Text style={{ fontSize: 16, fontWeight: "bold" }}>{item.title}</Text>
-            <Text style={{ color: "#444", marginTop: 5 }}>{item.message}</Text>
+    <Screen>
+      <Header title="CSMU" />
+      <Scroll load={q}>
+        <ProfileBanner name={student?.full_name} image={student?.profile_image} subtitle={student?.roll_no ? `Roll No · ${student.roll_no}` : undefined} />
+        <View style={{ paddingHorizontal: 16, paddingTop: 10, paddingBottom: 24 }}>
+          {!!q.error && <Empty text={q.error} error />}
+          <View style={{ borderWidth: 1, borderColor: '#C7C2CE', backgroundColor: '#E3E1E6', marginTop: 10 }}>
+            <View style={{ minHeight: 42, backgroundColor: '#B5A3C9', flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, gap: 10 }}>
+              <Feather name="book-open" size={19} color="#4C3568" />
+              <Text style={{ color: '#332842', fontSize: 14, fontWeight: '700' }}>Academic Information</Text>
+            </View>
+            {[
+              ['Department', student?.department],
+              ['Course', student?.course],
+              ['Division', student?.division],
+              ['Semester', student?.semester ? String(student.semester) : undefined],
+              ['Roll No', student?.roll_no],
+              ['Admission No', student?.admission_no],
+            ].map(([label, value]) => (
+              <View key={label} style={{ flexDirection: 'row', paddingHorizontal: 11, paddingVertical: 8, gap: 6 }}>
+                <Text style={{ color: '#45434A', fontSize: 13 }}>{label}:</Text>
+                <Text style={{ color: C.text, fontSize: 13, flex: 1 }}>{value || '—'}</Text>
+              </View>
+            ))}
           </View>
-        ))}
-      </ScrollView>
-    </SafeAreaView>
+          <Text style={[T.section, { marginTop: 28, marginBottom: 12, letterSpacing: 0.4 }]}>NOTICE</Text>
+          <NoticeBox items={notices} />
+        </View>
+      </Scroll>
+    </Screen>
   );
 }

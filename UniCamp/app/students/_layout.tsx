@@ -1,11 +1,11 @@
-import { Stack } from "expo-router";
+import { RoleTabs } from '../../lib/tabs';
 
-export default function StudentsLayout() {
-    return (
-        <Stack
-            screenOptions={{
-                headerShown: false,
-            }}
-        />
-    );
+export default function Layout() {
+  return <RoleTabs items={[
+    ['home', 'Home', 'home'],
+    ['channels', 'Channels', 'message-square'],
+    ['fees', 'Fees', 'credit-card'],
+    ['results', 'Results', 'award'],
+    ['profile', 'Profile', 'user'],
+  ]} />;
 }

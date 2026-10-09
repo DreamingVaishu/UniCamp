@@ -1,50 +1,44 @@
-# Welcome to your Expo app 👋
+# UniCamp
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+A beginner-friendly Expo + React Native + TypeScript + Supabase university app. The existing UI and role-specific side navigation are preserved.
 
-## Get started
+## Roles and features
 
-1. Install dependencies
+- **Student:** home, announcements, department channels, realtime chat, attachments, fees, results, profile, password change.
+- **Staff/teacher:** home, manage students, attendance, results, announcements, channels and chat.
+- **Admin:** dashboard, staff management, student overview and fee structures.
 
-   ```bash
-   npm install
-   ```
+## Fresh database setup
 
-2. Start the app
+This project is designed for a NEW Supabase project using a straightforward schema: PostgreSQL enums, sequences, tables and foreign keys only. The app does not need a custom enum RPC, triggers or database helper functions for dropdowns.
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+1. In Supabase, open **SQL Editor**.
+2. Run `supabase/schema.sql` once. This creates all required tables, enums and sequences.
+3. Add the Supabase URL and anon/publishable key to `.env`.
+4. Deploy `supabase/functions/provision-account` if you want the admin to create staff/student Auth accounts from the app.
+5. Create the first admin user in Supabase Authentication, then insert that user's Auth UUID into `public.admin` with their name and email.
+6. For chat file uploads and realtime messages, run `supabase/setup.sql` separately. It only configures the Storage bucket/policy and Realtime publication; it is not part of the basic schema.
+7. Install and start the app:
 
 ```bash
-npm run reset-project
+npm install
+npx expo start --clear
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+For an Android native development build, run `npx expo run:android`.
 
-## Learn more
+## Simple dropdowns
 
-To learn more about developing your project with Expo, look at the following resources:
+Dropdowns use the small constant lists in `lib/enums.ts`. These values exactly match the PostgreSQL enums in `supabase/schema.sql`, so there is no extra RPC or runtime enum-fetching logic. When changing an enum, update the SQL enum and the matching list in `lib/enums.ts` together.
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+Semester is an integer in the database; the UI offers semesters 1–8. Academic year is text, so the fee form generates a short list of academic years and also includes years already present in fee structures.
 
-## Join the community
+## Fee structure behavior
 
-Join our community of developers creating universal apps.
+An admin creates one fee structure for a selected department, course, semester, academic year and fee type. The app assigns that fee to existing students matching all three academic fields (department, course and semester). Newly created students are not automatically assigned old fee structures unless the app explicitly performs that assignment.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Database scope and security note
+
+`supabase/schema.sql` intentionally contains only enums, sequences, tables and foreign keys—no functions, triggers, indexes, or RLS policies. This is convenient for a simple local/class project, but it is **not production-secure by itself**. Before exposing real student data publicly, configure Supabase Row Level Security and Storage access policies appropriate to each role.
+
+The fee dropdown migration files are for upgrading an older existing database only; do not run those migrations after running the fresh `schema.sql`.

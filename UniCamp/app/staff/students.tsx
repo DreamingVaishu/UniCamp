@@ -1,246 +1,181 @@
-import { router } from "expo-router";
-import React, { useEffect, useState } from "react";
-import { Alert, Modal, Pressable, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import Feather from "react-native-vector-icons/Feather";
-import StudentTopNav from "../../components/StudentTopNav";
-import { getCurrentStaff } from "../../lib/getstaff";
-import { supabase } from "../../lib/supabase";
+import React, { useEffect, useState } from 'react';
+import { Alert, Pressable } from 'react-native';
+import { router } from 'expo-router';
+import Feather from '@expo/vector-icons/Feather';
+import Screen from '../../components/Screen';
+import Header from '../../components/Header';
+import CircleButton from '../../components/CircleButton';
+import SearchBar from '../../components/SearchBar';
+import Scroll from '../../components/Scroll';
+import Sheet from '../../components/Sheet';
+import Field from '../../components/Field';
+import Button from '../../components/Button';
+import Row from '../../components/Row';
+import EnumPicker from '../../components/EnumPicker';
+import { Empty, Loading } from '../../components/Status';
+import { DIVISIONS, SEMESTERS, STUDENT_STATUSES } from '../../lib/enums';
+import { supabase } from '../../lib/supabase';
+import { getCurrentStaff } from '../../lib/staff';
+import { C } from '../../lib/theme';
 
 export default function Students() {
-    const [staff, setStaff] = useState<any>(null);
-    const [students, setStudents] = useState<any[]>([]);
-    const [search, setSearch] = useState("");
+  const [students, setStudents] = useState<any[]>([]);
+  const [search, setSearch] = useState('');
+  const [edit, setEdit] = useState<any>(null);
+  const [name, setName] = useState('');
+  const [division, setDivision] = useState(DIVISIONS[0]);
+  const [semester, setSemester] = useState(SEMESTERS[0]);
+  const [status, setStatus] = useState(STUDENT_STATUSES[0]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
 
-    // Edit modal state
-    const [editModalVisible, setEditModalVisible] = useState(false);
-    const [selectedStudent, setSelectedStudent] = useState<any>(null);
-    const [editName, setEditName] = useState("");
-    const [editEmail, setEditEmail] = useState("");
-    const [editDivision, setEditDivision] = useState("");
-    const [editSemester, setEditSemester] = useState("");
+  useEffect(() => {
+    load();
+  }, []);
 
-    useEffect(() => {
-        const loadStaff = async () => {
-            const data = await getCurrentStaff();
-            setStaff(data);
-        };
+  const load = async () => {
+    setLoading(true);
+    try {
+      const current = await getCurrentStaff();
+      if (!current?.department) {
+        setStudents([]);
+        return;
+      }
 
-        loadStaff();
-    }, []);
+      const { data, error } = await supabase
+        .from('students')
+        .select('*')
+        .eq('department', current.department)
+        .order('full_name');
 
-    // Pulled out so we can call it again after an edit or a delete
-    const loadStudents = async () => {
-        if (!staff?.dept) return;
+      if (error) throw error;
+      setStudents(data || []);
+    } catch (error: any) {
+      Alert.alert('Error', error.message || 'Could not load students.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-        const { data, error } = await supabase
-            .from("students")
-            .select("*")
-            .eq("department", staff.dept)
-            .order("full_name", { ascending: true });
+  const open = (student: any) => {
+    if (!student?.id) return;
 
-        if (error) {
-            console.log(error);
-            return;
-        }
+    setEdit(student);
+    setName(student.full_name || '');
+    setDivision(student.division || DIVISIONS[0]);
+    setSemester(String(student.semester || 1));
+    setStatus(student.status || STUDENT_STATUSES[0]);
+  };
 
-        setStudents(data || []);
-    };
+  const save = async () => {
+    if (!edit?.id || !name.trim()) {
+      Alert.alert('Missing name', 'Enter the student name.');
+      return;
+    }
 
-    useEffect(() => {
-        loadStudents();
-    }, [staff]);
+    setSaving(true);
 
-    const handlecreate = () => {
-        router.replace("/staff/form");
-    };
+    const { error } = await supabase
+      .from('students')
+      .update({
+        full_name: name.trim(),
+        division,
+        semester: Number(semester),
+        status,
+      })
+      .eq('id', edit.id);
 
-    // Simple client side filter, good enough for a class-sized list
-    const filteredStudents = students.filter((student) =>
-        student.full_name?.toLowerCase().includes(search.toLowerCase())
+    setSaving(false);
+
+    if (error) {
+      Alert.alert('Not saved', error.message);
+      return;
+    }
+
+    setEdit(null);
+    load();
+  };
+
+  const remove = (student: any) => {
+    if (!student?.id) return;
+
+    Alert.alert(
+      'Delete student?',
+      `${student.full_name} and their login will be removed.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            const { data, error } = await supabase.functions.invoke(
+              'provision-account',
+              { body: { action: 'delete_student', student_id: student.id } }
+            );
+
+            if (error || data?.error) {
+              Alert.alert('Not deleted', data?.error || error?.message || 'Please try again.');
+              return;
+            }
+
+            load();
+          },
+        },
+      ]
     );
+  };
 
-    const openEdit = (student: any) => {
-        setSelectedStudent(student);
-        setEditName(student.full_name || "");
-        setEditEmail(student.email || "");
-        setEditDivision(student.division || "");
-        setEditSemester(student.semester ? String(student.semester) : "");
-        setEditModalVisible(true);
-    };
+  const list = students.filter(student =>
+    (student?.full_name || '').toLowerCase().includes(search.trim().toLowerCase())
+  );
 
-    const saveEdit = async () => {
-        if (!editName.trim()) {
-            Alert.alert("Error", "Name cannot be empty");
-            return;
+  return (
+    <Screen>
+      <Header
+        title="Students"
+        right={
+          <CircleButton
+            icon="plus"
+            label="Add student"
+            onPress={() => router.push('/staff/form')}
+          />
         }
+      />
 
-        const { error } = await supabase
-            .from("students")
-            .update({
-                full_name: editName.trim(),
-                email: editEmail.trim(),
-                division: editDivision,
-                semester: editSemester ? Number(editSemester) : null,
-            })
-            .eq("id", selectedStudent.id);
+      <SearchBar value={search} onChange={setSearch} placeholder="Search students" />
 
-        if (error) {
-            Alert.alert("Error", error.message);
-            return;
-        }
-
-        setEditModalVisible(false);
-        loadStudents();
-    };
-
-    const handleDelete = (student: any) => {
-        Alert.alert(
-            "Delete Student",
-            `Remove ${student.full_name} from the department? This cannot be undone.`,
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: async () => {
-                        const { error } = await supabase
-                            .from("students")
-                            .delete()
-                            .eq("id", student.id);
-
-                        if (error) {
-                            Alert.alert("Error", error.message);
-                            return;
-                        }
-
-                        loadStudents();
-                    },
-                },
-            ]
-        );
-    };
-
-    return (
-        <SafeAreaView style={{ flex: 1 }}>
-            <Text style={{ fontSize: 24, fontWeight: "bold", marginVertical: 20, padding: 10 }}>Students</Text>
-
-            <StudentTopNav />
-
-            <TextInput
-                value={search}
-                onChangeText={setSearch}
-                placeholder="Search student by name..."
-                style={{
-                    backgroundColor: "#e2e2e2",
-                    borderRadius: 10,
-                    padding: 12,
-                    marginHorizontal: 10,
-                    marginBottom: 10,
-                }}
+      <Scroll contentContainerStyle={{ paddingBottom: 24 }}>
+        {loading ? (
+          <Loading />
+        ) : list.length === 0 ? (
+          <Empty text="No students found." />
+        ) : (
+          list.map(student => (
+            <Row
+              key={student.id}
+              title={student.full_name || 'Student'}
+              lines={[
+                `${student.roll_no || '-'} · ${student.course || '-'} · Sem ${student.semester || '-'}`,
+                student.email || '',
+              ]}
+              onPress={() => open(student)}
+              right={
+                <Pressable onPress={() => remove(student)} hitSlop={10}>
+                  <Feather name="trash-2" size={19} color={C.danger} />
+                </Pressable>
+              }
             />
+          ))
+        )}
+      </Scroll>
 
-            {filteredStudents.map((student: any) => (
-                <View
-                    key={student.id}
-                    style={{
-                        padding: 12,
-                        marginHorizontal: 10,
-                        marginBottom: 8,
-                        backgroundColor: "#f2f2f2",
-                        borderRadius: 10,
-                        flexDirection: "row",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                    }}
-                >
-                    <Text style={{ fontSize: 15 }}>{student.full_name}</Text>
-
-                    <View style={{ flexDirection: "row", gap: 18 }}>
-                        <Pressable onPress={() => openEdit(student)}>
-                            <Feather name="edit-2" size={20} color="#000" />
-                        </Pressable>
-                        <Pressable onPress={() => handleDelete(student)}>
-                            <Feather name="trash-2" size={20} color="#c0392b" />
-                        </Pressable>
-                    </View>
-                </View>
-            ))}
-
-            {filteredStudents.length === 0 && (
-                <Text style={{ textAlign: "center", color: "#888", marginTop: 20 }}>
-                    No students found
-                </Text>
-            )}
-
-            <Pressable
-                onPress={handlecreate}
-                style={{
-                    backgroundColor: "#000",
-                    padding: 20,
-                    alignItems: "center",
-                    margin: 10,
-                    borderRadius: 50,
-                    position: "absolute",
-                    bottom: 20,
-                    right: 20,
-                }}
-            >
-                <Feather name="plus" style={{ color: "#fff" }} size={30} />
-            </Pressable>
-
-            <Modal
-                animationType="slide"
-                transparent={true}
-                visible={editModalVisible}
-                onRequestClose={() => setEditModalVisible(false)}
-            >
-                <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "rgba(0,0,0,0.5)" }}>
-                    <View style={{ width: "85%", backgroundColor: "#fff", padding: 20, borderRadius: 10 }}>
-                        <Text style={{ fontSize: 18, fontWeight: "bold", marginBottom: 10 }}>Edit Student</Text>
-
-                        <TextInput
-                            value={editName}
-                            onChangeText={setEditName}
-                            placeholder="Full Name"
-                            style={{ borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 10, borderRadius: 5 }}
-                        />
-                        <TextInput
-                            value={editEmail}
-                            onChangeText={setEditEmail}
-                            placeholder="Email"
-                            autoCapitalize="none"
-                            style={{ borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 10, borderRadius: 5 }}
-                        />
-                        <TextInput
-                            value={editDivision}
-                            onChangeText={setEditDivision}
-                            placeholder="Division"
-                            style={{ borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 10, borderRadius: 5 }}
-                        />
-                        <TextInput
-                            value={editSemester}
-                            onChangeText={setEditSemester}
-                            placeholder="Semester"
-                            keyboardType="number-pad"
-                            style={{ borderWidth: 1, borderColor: "#ccc", padding: 10, marginBottom: 10, borderRadius: 5 }}
-                        />
-
-                        <Pressable
-                            onPress={() => setEditModalVisible(false)}
-                            style={{ backgroundColor: "#ccc", padding: 10, alignItems: "center", borderRadius: 5, marginBottom: 10 }}
-                        >
-                            <Text>Cancel</Text>
-                        </Pressable>
-                        <Pressable
-                            onPress={saveEdit}
-                            style={{ backgroundColor: "#000", padding: 10, alignItems: "center", borderRadius: 5 }}
-                        >
-                            <Text style={{ color: "#fff" }}>Save Changes</Text>
-                        </Pressable>
-                    </View>
-                </View>
-            </Modal>
-        </SafeAreaView>
-    );
+      <Sheet visible={!!edit} title="Edit student" onClose={() => setEdit(null)}>
+        <Field label="Full name" value={name} onChangeText={setName} />
+        <EnumPicker label="Division" value={division} options={DIVISIONS} onChange={setDivision} />
+        <EnumPicker label="Semester" value={semester} options={SEMESTERS} onChange={setSemester} />
+        <EnumPicker label="Status" value={status} options={STUDENT_STATUSES} onChange={setStatus} />
+        <Button title="Save changes" onPress={save} loading={saving} style={{ marginTop: 22 }} />
+      </Sheet>
+    </Screen>
+  );
 }

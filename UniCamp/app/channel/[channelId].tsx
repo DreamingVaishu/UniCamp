@@ -1,596 +1,330 @@
-import * as DocumentPicker from "expo-document-picker";
-import { useLocalSearchParams } from "expo-router";
-import * as WebBrowser from "expo-web-browser";
-import React, { useEffect, useState } from "react";
-import { FlatList, Image, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { SafeAreaView } from "react-native-safe-area-context";
-import { supabase } from "../../lib/supabase";
+import React, { useEffect, useRef, useState } from 'react';
+import { Alert, FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, Text, TextInput, View } from 'react-native';
+import * as DocumentPicker from 'expo-document-picker';
+import { router, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Feather from '@expo/vector-icons/Feather';
+import Screen from '../../components/Screen';
+import Header from '../../components/Header';
+import CircleButton from '../../components/CircleButton';
+import Initials from '../../components/Initials';
+import { Empty } from '../../components/Status';
+import { supabase } from '../../lib/supabase';
+import { openAttachment, MAX_FILE_MB } from '../../lib/files';
+import { C, T } from '../../lib/theme';
 
-export default function ChatScreen() {
-    const { channelId } = useLocalSearchParams<{ channelId: string }>();
-    const [channelData, setChannelData] = useState(null);
-    const [createdbyData, setCreatedbyData] = useState(null);
-    // const [loading, setLoading] = useState(true);
-    const [messages, setMessages] = useState<any[]>([]);
-    const [userId, setUserId] = useState<string | null>(null);
-    const [message, setMessage] = useState("");
-    const [attachment, setAttachment] = useState<any>(null);
-    const [attachmentUrls, setAttachmentUrls] = useState<{
-        [key: string]: string;
-    }>({});
-    const [sending, setSending] = useState(false);
+export default function Chat() {
+  const { channelId } = useLocalSearchParams<{ channelId: string }>();
+  const [userId, setUserId] = useState('');
+  const [channel, setChannel] = useState<any>(null);
+  const [messages, setMessages] = useState<any[]>([]);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const [text, setText] = useState('');
+  const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [sending, setSending] = useState(false);
+  const [keyboard, setKeyboard] = useState(false);
+  const list = useRef<FlatList>(null);
+  const insets = useSafeAreaInsets();
 
+  useEffect(() => {
+    loadUser();
+    loadData();
 
-    useEffect(() => {
-        const getUser = async () => {
-            const {
-                data: { user },
-            } = await supabase.auth.getUser();
+    const sub = supabase
+      .channel('messages-' + channelId)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'messages',
+        filter: `channel_id=eq.${channelId}`,
+      }, loadData)
+      .subscribe();
 
-            if (user) {
-                setUserId(user.id);
-            }
-        };
+    const show = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => setKeyboard(true)
+    );
+    const hide = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      () => setKeyboard(false)
+    );
 
-        getUser();
-    }, []);
-
-
-    useEffect(() => {
-        const fletchChannelData = async () => {
-            try {
-                const { data, error } = await supabase
-                    .from("channels")
-                    .select("*")
-                    .eq("id", channelId)
-                    .single();
-
-                if (error) {
-                    console.error("Error fetching channel:", error);
-                    return;
-                }
-
-                setChannelData(data);
-            } catch (error) {
-                console.error("Error fetching channel data:", error);
-            } finally {
-                // setLoading(false);
-            }
-        };
-        fletchChannelData();
-    }, [channelId]);
-
-
-    useEffect(() => {
-        const creatorname = async () => {
-            try {
-                const createdby = channelData?.created_by;
-                const { data: creator, error } = await supabase
-                    .from("staff")
-                    .select("username")
-                    .eq("id", createdby)
-                    .maybeSingle();
-                setCreatedbyData(creator?.username);
-            } finally {
-                // setLoading(false);
-            }
-        }
-        creatorname();
-    }, [channelData]);
-
-
-    const fetchMessages = async () => {
-        try {
-            const { data, error } = await supabase
-                .from("messages")
-                .select("*")
-                .eq("channel_id", channelId)
-                .order("created_at", { ascending: true });
-
-            if (error) {
-                console.error("Error fetching messages:", error);
-                return;
-            }
-
-            setMessages(data || []);
-
-            const urls: { [key: string]: string } = {};
-            for (const item of data || []) {
-                // Only create URLs for images
-                if (
-                    item.attachment_path &&
-                    item.attachment_type?.startsWith("image/")
-                ) {
-                    const { data: signedData, error: signedError } =
-                        await supabase.storage
-                            .from("chat-attachments")
-                            .createSignedUrl(
-                                item.attachment_path,
-                                60 * 60
-                            );
-
-                    if (signedError) {
-                        console.error(
-                            "Error creating image URL:",
-                            item.attachment_path,
-                            signedError
-                        );
-                        continue;
-                    }
-
-                    if (signedData?.signedUrl) {
-                        urls[item.id] = signedData.signedUrl;
-                    }
-                }
-            }
-            setAttachmentUrls(urls);
-
-        } catch (error) {
-            console.error("Error fetching messages:", error);
-        }
-        // setTimeout(fetchMessages, 5000); // Poll every 5 seconds
+    return () => {
+      supabase.removeChannel(sub);
+      show.remove();
+      hide.remove();
     };
+  }, [channelId]);
 
-    useEffect(() => {
-        fetchMessages();
-    }, [channelId]);
+  const loadUser = async () => {
+    const { data } = await supabase.auth.getUser();
+    setUserId(data.user?.id || '');
+  };
 
-    const sendmessage = async () => {
-        const text = message.trim();
-        if (!text && !attachment) {
-            return;
-        }
-        if (!userId) {
-            console.error("User not logged in");
-            return;
-        }
-        if (!channelId) {
-            console.error("Channel ID is missing");
-            return;
-        }
-        setSending(true);
+  const loadData = async () => {
+    if (!channelId) return;
 
-        try {
-            let attachmentpath: string | null = null;
-            if (attachment) {
-                const fileExt = attachment.name?.split(".").pop() || "file";
-                const filePath =
-                    `${channelId}/${userId}/${Date.now()}.${fileExt}`;
-                console.log(filePath)
-                const response = await fetch(attachment.uri);
-                const arrayBuffer = await response.arrayBuffer();
+    const { data: channelData } = await supabase
+      .from('channels')
+      .select('*')
+      .eq('id', channelId)
+      .maybeSingle();
 
-                // const { error: errorfile } = await supabase.storage
-                //     .from("chat-attachments")
-                //     .upload(filePath, arrayBuffer, {
-                //         contentType: attachment.mimeType || "application/octet-stream",
-                //         upsert: false,
-                //     });
-                // if (errorfile) {
-                //     console.error("Attachment upload error:", errorfile);
-                //     return;
-                // }
-                attachmentpath = filePath;
-            }
+    const { data: messageData, error } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('channel_id', channelId)
+      .order('created_at', { ascending: true });
 
-            const { data, error } = await supabase
-                .from("messages")
-                .insert({
-                    channel_id: channelId,
-                    sender_id: userId,
-                    message: text || null,
-                    attachment_path: attachmentpath,
-                    attachment_name: attachment?.name || null,
-                    attachment_type: attachment?.mimeType || null,
-                    attachment_size: attachment?.size || null,
-                })
-                .select()
-                .single();
-
-            if (error) {
-                console.error("Message insert error:", error);
-
-                // Remove uploaded file if message failed
-                if (attachmentpath) {
-                    await supabase.storage
-                        .from("chat-attachments")
-                        .remove([attachmentpath]);
-                }
-
-                return;
-            }
-            setMessages((previous) => [
-                ...previous,
-                data,
-            ]);
-            setMessage("");
-            setAttachment(null);
-
-            if (
-                data.attachment_path &&
-                data.attachment_type?.startsWith("image/")
-            ) {
-                const { data: signedData, error: signedError } =
-                    await supabase.storage
-                        .from("chat-attachments")
-                        .createSignedUrl(
-                            data.attachment_path,
-                            60 * 60
-                        );
-
-                if (signedError) {
-                    console.error(
-                        "Error creating new image URL:",
-                        signedError
-                    );
-                } else if (signedData?.signedUrl) {
-                    setAttachmentUrls((previous) => ({
-                        ...previous,
-                        [data.id]: signedData.signedUrl,
-                    }));
-                }
-            }
-        } finally { setSending(false); }
-    };
-
-    const attachmentpicker = async () => {
-        try {
-            const result = await DocumentPicker.getDocumentAsync({
-                type: "*/*",
-                copyToCacheDirectory: true,
-            })
-            if (result.canceled) return;
-            const file = result.assets[0];
-            setAttachment(file)
-            console.log("attachmnt ", file)
-        } finally {
-
-        }
+    if (error) {
+      console.log(error);
+      setLoading(false);
+      return;
     }
 
-    const openAttachment = async (item: any) => {
-        if (!item.attachment_path) return;
+    setChannel(channelData);
+    setMessages(messageData || []);
 
-        try {
+    const ids = [...new Set((messageData || []).map(item => item.sender_id).filter(Boolean))];
 
-            const { data, error } = await supabase.storage
-                .from("chat-attachments")
-                .createSignedUrl(item.attachment_path, 60 * 5);
+    if (ids.length) {
+      const { data: staff } = await supabase
+        .from('staff')
+        .select('id,username')
+        .in('id', ids);
 
+      const { data: students } = await supabase
+        .from('students')
+        .select('id,full_name')
+        .in('id', ids);
 
-            if (error) {
-                console.error("Error creating attachment URL:", error);
-                return;
-            }
+      const result: Record<string, string> = {};
+      (staff || []).map(item => { result[item.id] = item.username || 'Staff'; });
+      (students || []).map(item => { result[item.id] = item.full_name || 'Student'; });
+      setNames(result);
+    }
 
-            if (!data?.signedUrl) {
-                console.error("No signed URL returned");
-                return;
-            }
+    setLoading(false);
+  };
 
-            await WebBrowser.openBrowserAsync(data.signedUrl);
+  const pickFile = async () => {
+    const result = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true });
+    if (result.canceled) return;
 
-        } catch (error) {
-            console.error("Error opening attachment:", error);
+    const picked = result.assets[0];
+    if (picked.size && picked.size > MAX_FILE_MB * 1024 * 1024) {
+      Alert.alert('File too big', `Choose a file smaller than ${MAX_FILE_MB} MB.`);
+      return;
+    }
+
+    setFile(picked);
+  };
+
+  const send = async () => {
+    if (sending || (!text.trim() && !file) || !userId || !channelId) return;
+
+    setSending(true);
+    let path: string | null = null;
+
+    try {
+      if (file) {
+        const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        path = `${channelId}/${userId}/${Date.now()}-${safeName}`;
+
+        const bytes = await (await fetch(file.uri)).arrayBuffer();
+        const { error } = await supabase.storage
+          .from('chat-attachments')
+          .upload(path, bytes, {
+            contentType: file.mimeType || 'application/octet-stream',
+          });
+
+        if (error) {
+          Alert.alert('Upload failed', error.message);
+          return;
         }
-        console.log(
-            "MESSAGE:",
-            item.id,
-            "PATH:",
-            item.attachment_path
-        );
-    };
+      }
 
-    return (
-        <SafeAreaView style={{ flex: 1 }}>
+      const { error } = await supabase.from('messages').insert({
+        channel_id: channelId,
+        sender_id: userId,
+        message: text.trim() || null,
+        attachment_path: path,
+        attachment_name: file?.name || null,
+        attachment_type: file?.mimeType || null,
+        attachment_size: file?.size || null,
+      });
 
-            {/* Header */}
-            <View
-                style={{
-                    padding: 20,
-                    borderBottomWidth: 1,
-                    borderColor: "#ccc",
-                }}
-            >
-                <Text>{channelData?.name}</Text>
-                <Text>by {createdbyData}</Text>
-            </View>
+      if (error) {
+        if (path) await supabase.storage.from('chat-attachments').remove([path]);
+        Alert.alert('Not sent', error.message);
+        return;
+      }
 
-            <KeyboardAvoidingView
-                style={{ flex: 1 }}
-                behavior={Platform.OS === "ios" ? "padding" : "height"}
-            >
-                <FlatList
-                    data={messages}
-                    keyExtractor={(item) => item.id}
-                    contentContainerStyle={styles.messageList}
-                    renderItem={({ item }) => {
-                        const isMyMessage = item.sender_id === userId;
-                        const isImage =
-                            item.attachment_type?.startsWith("image/");
-                        return (
-                            <View
-                                style={[
-                                    styles.messageRow,
-                                    isMyMessage && styles.myMessageRow,
-                                ]}
-                            >
-                                <View
-                                    style={[
-                                        styles.messageBubble,
-                                        isMyMessage && styles.myMessageBubble,
-                                    ]}
-                                >
-                                    {item.message && (
-                                        <Text
-                                            style={[
-                                                styles.messageText,
-                                                isMyMessage && styles.myMessageText,
-                                            ]}
-                                        >
-                                            {item.message}
-                                        </Text>
-                                    )}
+      setText('');
+      setFile(null);
+      await loadData();
+    } finally {
+      setSending(false);
+    }
+  };
 
-                                    {item.attachment_path && (
-                                        <>
-                                            {isImage && attachmentUrls[item.id] ? (
-                                                <Pressable
-                                                    onPress={() => openAttachment(item)}
-                                                >
-                                                    <Image
-                                                        source={{
-                                                            uri: attachmentUrls[item.id],
-                                                        }}
-                                                        style={{ width: 200, height: 200 }}
-                                                    />
-                                                </Pressable>
-                                            ) : (
-                                                <Pressable
-                                                    // style={styles.attachmentCard}
-                                                    onPress={() => openAttachment(item)}
-                                                >
-                                                    <Text
-                                                        style={styles.attachmentName}
-                                                        numberOfLines={1}
-                                                    >
-                                                        {item.attachment_name}
-                                                    </Text>
-                                                </Pressable>
-                                            )}
-                                        </>
-                                    )}
+  const togglePin = (item: any) => {
+    Alert.alert(item.pinned ? 'Unpin message?' : 'Pin message?', undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: item.pinned ? 'Unpin' : 'Pin',
+        onPress: async () => {
+          await supabase
+            .from('messages')
+            .update({ pinned: !item.pinned })
+            .eq('id', item.id);
+          loadData();
+        },
+      },
+    ]);
+  };
 
-                                    <Text
-                                        style={[
-                                            styles.messageTime,
-                                            isMyMessage && styles.myMessageTime,
-                                        ]}
-                                    >
-                                        {item.created_at}
-                                    </Text>
-                                </View>
-                            </View>
-                        );
-                    }}
-                />
+  const canSend = !!text.trim() || !!file;
 
-                {attachment && (
-                    <View style={styles.selectedAttachment}>
+  return (
+    <Screen>
+      <Header
+        back
+        large
+        title={channel?.name || 'Channel'}
+        right={
+          <CircleButton
+            icon="more-vertical"
+            label="Channel info"
+            size={34}
+            onPress={() =>
+              router.push({
+                pathname: '/channel/info/[channelId]',
+                params: { channelId: String(channelId) },
+              })
+            }
+          />
+        }
+      />
 
-                        <Text
-                            style={styles.selectedAttachmentName}
-                            numberOfLines={1}
-                        >
-                            📎 {attachment.name}
-                        </Text>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior="padding">
+        <FlatList
+          ref={list}
+          data={messages}
+          keyExtractor={item => item.id}
+          contentContainerStyle={{ padding: 16, flexGrow: 1 }}
+          onContentSizeChange={() => list.current?.scrollToEnd({ animated: false })}
+          ListEmptyComponent={<Empty text={loading ? '' : 'No messages yet. Say hello!'} />}
+          renderItem={({ item }) => {
+            const mine = item.sender_id === userId;
 
-                        <Pressable
-                            onPress={() => setAttachment(null)}
-                        >
-                            <Text style={styles.removeAttachment}>
-                                ✕
-                            </Text>
-                        </Pressable>
-
-                    </View>
+            return (
+              <View style={{ alignItems: mine ? 'flex-end' : 'flex-start', marginBottom: 14 }}>
+                {!mine && (
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    <Initials name={names[item.sender_id]} size={22} />
+                    <Text style={T.small}>{names[item.sender_id] || 'User'}</Text>
+                  </View>
                 )}
-                <View
-                    style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        padding: 10,
-                        borderTopWidth: 1,
-                        borderColor: "#ccc",
-                    }}
+
+                <Pressable
+                  onLongPress={() => togglePin(item)}
+                  style={{
+                    maxWidth: '82%',
+                    minWidth: 90,
+                    padding: 12,
+                    borderRadius: 12,
+                    backgroundColor: mine ? C.teal : C.surface,
+                  }}
                 >
+                  {!!item.message && (
+                    <Text style={{ color: mine ? C.white : C.text, fontSize: 15 }}>
+                      {item.message}
+                    </Text>
+                  )}
 
-                    <TextInput
+                  {!!item.attachment_path && (
+                    <Pressable
+                      onPress={() => openAttachment(item.attachment_path)}
+                      style={{
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        gap: 6,
+                        marginTop: item.message ? 8 : 0,
+                      }}
+                    >
+                      <Feather name="paperclip" size={14} color={mine ? C.white : C.text} />
+                      <Text
+                        numberOfLines={1}
                         style={{
-                            flex: 1,
-                            borderWidth: 1,
-                            borderColor: "#ccc",
-                            borderRadius: 20,
-                            paddingHorizontal: 15,
-                            paddingVertical: 10,
-                            marginRight: 5,
+                          color: mine ? C.white : C.text,
+                          textDecorationLine: 'underline',
+                          flexShrink: 1,
                         }}
-                        placeholder="Type a message..."
-                        value={message}
-                        onChangeText={setMessage}
-                        multiline
-                    />
-
-                    <Pressable
-                        style={styles.attachmentButton}
-                        onPress={attachmentpicker}
-                    >
-                        <Text style={styles.attachmentIcon}>
-                            📎
-                        </Text>
+                      >
+                        {item.attachment_name}
+                      </Text>
                     </Pressable>
+                  )}
 
+                  <View style={{ flexDirection: 'row', alignSelf: 'flex-end', alignItems: 'center', gap: 4, marginTop: 6 }}>
+                    {item.pinned && <Feather name="bookmark" size={10} color={mine ? '#DDE6E8' : C.muted} />}
+                    <Text style={{ fontSize: 10, color: mine ? '#DDE6E8' : C.muted }}>
+                      {new Date(item.created_at).toLocaleTimeString('en-IN', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </Text>
+                  </View>
+                </Pressable>
+              </View>
+            );
+          }}
+        />
 
-                    <Pressable
-                        style={[
-                            styles.sendButton,
-                            (!message.trim() || sending) &&
-                            styles.sendButtonDisabled,
-                        ]}
-                        onPress={sendmessage}
-                        disabled={
-                            sending ||
-                            (!message.trim() && !attachment)
-                        }
-                    >
-                        <Text style={{ color: "#000" }}>
-                            ➤
-                        </Text>
-                    </Pressable>
+        {file && (
+          <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: C.field, marginHorizontal: 12, marginBottom: 6, padding: 10, borderRadius: 10, gap: 8 }}>
+            <Feather name="file" size={16} color={C.text} />
+            <Text numberOfLines={1} style={{ flex: 1 }}>{file.name}</Text>
+            <Pressable onPress={() => setFile(null)} hitSlop={10}>
+              <Feather name="x" size={18} color={C.text} />
+            </Pressable>
+          </View>
+        )}
 
-                </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, paddingBottom: keyboard ? 8 : insets.bottom + 8, gap: 8 }}>
+          <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', backgroundColor: C.bar, borderRadius: 12, paddingHorizontal: 14 }}>
+            <TextInput
+              value={text}
+              onChangeText={setText}
+              placeholder="Type a message"
+              placeholderTextColor="#6F6F74"
+              multiline
+              style={{ flex: 1, minHeight: 50, maxHeight: 110, fontSize: 15, color: C.text }}
+            />
+            <Pressable onPress={pickFile} hitSlop={10}>
+              <Feather name="paperclip" size={20} color={C.text} />
+            </Pressable>
+          </View>
 
-            </KeyboardAvoidingView>
-
-        </SafeAreaView>
-    );
-};
-
-
-const styles = StyleSheet.create({
-    inputContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        padding: 10,
-        borderTopWidth: 1,
-        borderColor: "#ccc",
-    },
-
-    attachmentButton: {
-        width: 42,
-        height: 42,
-        alignItems: "center",
-        justifyContent: "center",
-    },
-
-    attachmentIcon: {
-        fontSize: 22,
-    },
-
-    messageInput: {
-        flex: 1,
-        borderWidth: 1,
-        borderColor: "#ccc",
-        borderRadius: 20,
-        paddingHorizontal: 15,
-        paddingVertical: 10,
-        marginHorizontal: 5,
-        maxHeight: 100,
-    },
-
-    selectedAttachment: {
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 15,
-        paddingVertical: 8,
-        backgroundColor: "#f5f5f5",
-        borderTopWidth: 1,
-        borderTopColor: "#eee",
-    },
-
-    selectedAttachmentName: {
-        flex: 1,
-        fontSize: 13,
-        color: "#333",
-    },
-
-    removeAttachment: {
-        fontSize: 18,
-        color: "#777",
-        marginLeft: 10,
-    },
-
-    sendButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: "#007AFF",
-        alignItems: "center",
-        justifyContent: "center",
-    },
-
-    sendButtonDisabled: {
-        opacity: 0.4,
-    },
-
-    sendText: {
-        color: "#fff",
-        fontSize: 20,
-        fontWeight: "700",
-    },
-
-    messageList: {
-        padding: 15,
-        paddingBottom: 20,
-    },
-
-    messageRow: {
-        width: "100%",
-        alignItems: "flex-start",
-        marginBottom: 10,
-    },
-
-    myMessageRow: {
-        alignItems: "flex-end",
-    },
-
-    messageBubble: {
-        maxWidth: "80%",
-        backgroundColor: "#eeeeee",
-        borderRadius: 16,
-        paddingHorizontal: 14,
-        paddingVertical: 9,
-    },
-
-    myMessageBubble: {
-        backgroundColor: "#007AFF",
-    },
-
-    messageText: {
-        fontSize: 15,
-        color: "#222",
-    },
-
-    myMessageText: {
-        color: "#fff",
-    },
-
-    messageTime: {
-        fontSize: 10,
-        color: "#888",
-        alignSelf: "flex-end",
-        marginTop: 4,
-    },
-
-    myMessageTime: {
-        color: "#dceeff",
-    },
-
-    attachment: {
-        flexDirection: "row",
-        alignItems: "center",
-        marginTop: 5,
-        paddingVertical: 5,
-    },
-
-    attachmentName: {
-        marginLeft: 8,
-        color: "#333",
-        flexShrink: 1,
-    },
-
-    myAttachmentName: {
-        color: "#fff",
-    },
-
-});
+          <Pressable
+            onPress={send}
+            disabled={!canSend || sending}
+            style={{
+              width: 54,
+              height: 54,
+              borderRadius: 27,
+              backgroundColor: C.dark,
+              alignItems: 'center',
+              justifyContent: 'center',
+              opacity: canSend && !sending ? 1 : 0.5,
+            }}
+          >
+            <Feather name="send" size={20} color={C.white} />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
+    </Screen>
+  );
+}
